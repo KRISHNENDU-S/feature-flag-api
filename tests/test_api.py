@@ -1,0 +1,107 @@
+"""Integration tests for the HTTP API using FastAPI's TestClient."""
+
+from __future__ import annotations
+
+import pytest
+from fastapi.testclient import TestClient
+
+from app import main
+
+
+@pytest.fixture
+def client():
+    # Reset module-level singletons between tests.
+    main.storage.clear()
+    main.cache.clear()
+    with TestClient(main.app) as c:
+        yield c
+
+
+def _flag_payload(name="checkout-v2", default_state=False, **extra):
+    payload = {"name": name, "default_state": default_state, "rules": []}
+    payload.update(extra)
+    return payload
+
+
+def test_create_flag_returns_201(client):
+    resp = client.post("/flags", json=_flag_payload())
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["name"] == "checkout-v2"
+    assert "id" in body and "created_at" in body
+
+
+def test_duplicate_name_returns_409(client):
+    client.post("/flags", json=_flag_payload(name="dup"))
+    resp = client.post("/flags", json=_flag_payload(name="dup"))
+    assert resp.status_code == 409
+
+
+def test_invalid_payload_returns_422(client):
+    # missing required default_state
+    resp = client.post("/flags", json={"name": "bad"})
+    assert resp.status_code == 422
+
+
+def test_list_and_get_flag(client):
+    created = client.post("/flags", json=_flag_payload(name="list-me")).json()
+    assert client.get("/flags").json()[0]["id"] == created["id"]
+    assert client.get(f"/flags/{created['id']}").status_code == 200
+
+
+def test_get_missing_flag_returns_404(client):
+    assert client.get("/flags/nope").status_code == 404
+
+
+def test_delete_flag_returns_204_and_404_after(client):
+    created = client.post("/flags", json=_flag_payload(name="del-me")).json()
+    assert client.delete(f"/flags/{created['id']}").status_code == 204
+    assert client.get(f"/flags/{created['id']}").status_code == 404
+
+
+def test_delete_missing_returns_404(client):
+    assert client.delete("/flags/nope").status_code == 404
+
+
+def test_evaluate_flag(client):
+    payload = _flag_payload(
+        name="eval-flag",
+        default_state=False,
+        rules=[
+            {"field": "subscription_tier", "operator": "equals", "value": "premium"}
+        ],
+    )
+    flag = client.post("/flags", json=payload).json()
+
+    ctx = {"user_id": "u1", "subscription_tier": "premium", "region": "us"}
+    resp = client.post(f"/flags/{flag['id']}/evaluate", json=ctx)
+    assert resp.status_code == 200
+    assert resp.json()["enabled"] is True
+
+    ctx_free = {"user_id": "u2", "subscription_tier": "free", "region": "us"}
+    resp2 = client.post(f"/flags/{flag['id']}/evaluate", json=ctx_free)
+    assert resp2.json()["enabled"] is False
+
+
+def test_evaluate_missing_flag_returns_404(client):
+    ctx = {"user_id": "u1", "subscription_tier": "free", "region": "us"}
+    assert client.post("/flags/nope/evaluate", json=ctx).status_code == 404
+
+
+def test_delete_invalidates_cache(client):
+    flag = client.post("/flags", json=_flag_payload(name="cache-inv", default_state=True)).json()
+    ctx = {"user_id": "u1", "subscription_tier": "free", "region": "us"}
+    client.post(f"/flags/{flag['id']}/evaluate", json=ctx)  # cache populated
+    client.delete(f"/flags/{flag['id']}")  # should invalidate
+    # Re-creating with the same id is not possible; just verify cache shrank.
+    assert main.cache.stats()["size"] == 0
+
+
+def test_health_reports_counts_and_hit_rate(client):
+    client.post("/flags", json=_flag_payload(name="h1"))
+    resp = client.get("/health")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "ok"
+    assert body["total_flags"] == 1
+    assert "hit_rate" in body["cache"]
