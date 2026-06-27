@@ -97,6 +97,77 @@ def test_delete_invalidates_cache(client):
     assert main.cache.stats()["size"] == 0
 
 
+def test_update_flag_success_returns_200(client):
+    created = client.post(
+        "/flags", json=_flag_payload(name="patch-me", default_state=False)
+    ).json()
+
+    resp = client.patch(
+        f"/flags/{created['id']}",
+        json={"name": "patched", "default_state": True},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["id"] == created["id"]          # id is preserved
+    assert body["name"] == "patched"            # updated field
+    assert body["default_state"] is True        # updated field
+    assert body["created_at"] == created["created_at"]  # untouched
+
+
+def test_update_partial_only_changes_provided_fields(client):
+    created = client.post(
+        "/flags",
+        json=_flag_payload(name="partial", default_state=True, percentage=10),
+    ).json()
+
+    resp = client.patch(f"/flags/{created['id']}", json={"default_state": False})
+    body = resp.json()
+    assert body["default_state"] is False       # changed
+    assert body["name"] == "partial"            # unchanged
+    assert body["percentage"] == 10             # unchanged
+
+
+def test_update_missing_flag_returns_404(client):
+    assert client.patch("/flags/nope", json={"name": "x"}).status_code == 404
+
+
+def test_update_name_conflict_returns_409(client):
+    client.post("/flags", json=_flag_payload(name="taken"))
+    other = client.post("/flags", json=_flag_payload(name="other")).json()
+
+    resp = client.patch(f"/flags/{other['id']}", json={"name": "taken"})
+    assert resp.status_code == 409
+
+
+def test_update_same_name_is_allowed(client):
+    created = client.post("/flags", json=_flag_payload(name="keep-name")).json()
+    # Re-sending the flag's own name must not be treated as a conflict.
+    resp = client.patch(
+        f"/flags/{created['id']}", json={"name": "keep-name", "default_state": True}
+    )
+    assert resp.status_code == 200
+
+
+def test_update_invalidates_cache(client):
+    created = client.post(
+        "/flags", json=_flag_payload(name="cache-update", default_state=True)
+    ).json()
+    ctx = {"user_id": "u1", "subscription_tier": "free", "region": "us"}
+
+    # Populate the cache for this flag.
+    client.post(f"/flags/{created['id']}/evaluate", json=ctx)
+    assert main.cache.stats()["size"] == 1
+
+    # Updating the flag must drop its cached evaluations.
+    resp = client.patch(f"/flags/{created['id']}", json={"default_state": False})
+    assert resp.status_code == 200
+    assert main.cache.stats()["size"] == 0
+
+    # Re-evaluating now reflects the new default_state (no stale cache hit).
+    result = client.post(f"/flags/{created['id']}/evaluate", json=ctx).json()
+    assert result["enabled"] is False
+
+
 def test_health_reports_counts_and_hit_rate(client):
     client.post("/flags", json=_flag_payload(name="h1"))
     resp = client.get("/health")

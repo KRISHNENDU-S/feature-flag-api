@@ -88,6 +88,31 @@ class Flag(FlagCreate):
     )
 
 
+class FlagUpdate(BaseModel):
+    """Partial update for a flag. Only the fields that are set are applied.
+
+    ``model_fields_set`` distinguishes "field omitted" from "field set to a
+    value" (including an explicit ``null`` to clear the rollout percentage).
+    """
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    default_state: bool | None = None
+    rules: list[Rule] | None = None
+    percentage: int | None = Field(default=None, ge=0, le=100)
+
+    @field_validator("name")
+    @classmethod
+    def _strip_name(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        v = v.strip()
+        if not v:
+            raise ValueError("name must not be blank")
+        return v
+
+
 class EvaluationRequest(BaseModel):
     """User context used to evaluate a flag."""
 

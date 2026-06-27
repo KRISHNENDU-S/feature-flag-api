@@ -14,6 +14,7 @@ from app.models import (
     EvaluationResult,
     Flag,
     FlagCreate,
+    FlagUpdate,
 )
 from app.services.evaluation_service import EvaluationService
 from app.storage.storage import FlagStorage, StorageUnavailableError
@@ -92,6 +93,36 @@ async def get_flag(
             status_code=status.HTTP_404_NOT_FOUND, detail="flag not found"
         )
     return flag
+
+
+@app.patch("/flags/{flag_id}", response_model=Flag)
+async def update_flag(
+    flag_id: str,
+    payload: FlagUpdate,
+    store: FlagStorage = Depends(get_storage),
+    flag_cache: TTLCache = Depends(get_cache),
+) -> Flag:
+    # Only the fields the client actually sent (keeps Rule objects typed and
+    # lets an explicit `null` percentage clear the rollout).
+    changes = {field: getattr(payload, field) for field in payload.model_fields_set}
+    try:
+        updated = await store.update(flag_id, changes)
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="flag not found"
+        ) from exc
+    except ValueError as exc:
+        logger.warning("flag update conflict", extra={"context": {"flag_id": flag_id}})
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+        ) from exc
+    except StorageUnavailableError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+        ) from exc
+    # Stale evaluations for this flag must not survive a change.
+    flag_cache.invalidate(flag_id)
+    return updated
 
 
 @app.delete("/flags/{flag_id}", status_code=status.HTTP_204_NO_CONTENT)

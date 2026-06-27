@@ -58,6 +58,42 @@ class FlagStorage:
             self._check_available()
             return list(self._flags.values())
 
+    async def update(self, flag_id: str, changes: dict[str, object]) -> Flag:
+        """Apply a partial update to an existing flag and return it.
+
+        ``changes`` holds only the fields to overwrite (already validated and
+        correctly typed). Raises ``KeyError`` if the flag does not exist and
+        ``ValueError`` if a new ``name`` collides with another flag.
+        """
+
+        async with self._lock:
+            self._check_available()
+            existing = self._flags.get(flag_id)
+            if existing is None:
+                raise KeyError(flag_id)
+
+            new_name = changes.get("name")
+            if (
+                new_name is not None
+                and new_name != existing.name
+                and any(
+                    f.name == new_name
+                    for fid, f in self._flags.items()
+                    if fid != flag_id
+                )
+            ):
+                raise ValueError(f"flag name already exists: {new_name}")
+
+            updated = existing.model_copy(update=changes)
+            self._flags[flag_id] = updated
+            logger.info(
+                "flag updated",
+                extra={
+                    "context": {"flag_id": flag_id, "fields": sorted(changes)}
+                },
+            )
+            return updated
+
     async def delete(self, flag_id: str) -> bool:
         async with self._lock:
             self._check_available()

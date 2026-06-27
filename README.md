@@ -126,6 +126,7 @@ Configuration is read from environment variables or a local `.env` file
 | `POST`   | `/flags`                    | `201`   | Create a flag. `409` on duplicate name. |
 | `GET`    | `/flags`                    | `200`   | List all flags.                         |
 | `GET`    | `/flags/{flag_id}`          | `200`   | `404` if not found.                     |
+| `PATCH`  | `/flags/{flag_id}`          | `200`   | Partial update. `404` if not found. `409` on name conflict. Invalidates cache immediately. |
 | `DELETE` | `/flags/{flag_id}`          | `204`   | Invalidates cache. `404` if not found.  |
 | `POST`   | `/flags/{flag_id}/evaluate` | `200`   | Evaluate for a user context.            |
 | `GET`    | `/health`                   | `200`   | Status, total flags, cache hit rate.    |
@@ -160,6 +161,35 @@ curl -X POST http://localhost:8000/flags \
     "rules": [],
     "percentage": 25
   }'
+```
+
+### Update a flag (partial)
+
+Only the fields you send are changed; the rest are left untouched. Updating a
+flag invalidates its cached evaluations immediately.
+
+Update a flag's default state:
+
+```bash
+curl -X PATCH http://localhost:8000/flags/<FLAG_ID> \
+  -H 'Content-Type: application/json' \
+  -d '{"default_state": true}'
+```
+
+Update rules only:
+
+```bash
+curl -X PATCH http://localhost:8000/flags/<FLAG_ID> \
+  -H 'Content-Type: application/json' \
+  -d '{"rules": [{"field": "region", "operator": "equals", "value": "us"}]}'
+```
+
+Clear the percentage rollout (send an explicit `null`):
+
+```bash
+curl -X PATCH http://localhost:8000/flags/<FLAG_ID> \
+  -H 'Content-Type: application/json' \
+  -d '{"percentage": null}'
 ```
 
 ### Evaluate a flag
@@ -215,3 +245,7 @@ curl http://localhost:8000/health
 5. If a `percentage` is set, an otherwise-ON result is gated on
    `hash(user_id) % 100 < percentage` (stable SHA-256 hash).
 6. Cache the result and return it.
+
+A flag's cached evaluations are invalidated immediately whenever the flag is
+**updated (`PATCH`)** or **deleted (`DELETE`)**, so stale results are never
+served after a change.
