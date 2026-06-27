@@ -21,6 +21,53 @@ in-memory with a TTL, and the cache is invalidated whenever a flag changes.
 - Structured **JSON logging** on every operation.
 - Optional **percentage rollout** (`hash(user_id) % 100 < percentage`).
 
+## Architecture
+
+The diagram below traces the full lifecycle of a
+`POST /flags/{flag_id}/evaluate` request through the API, cache, storage, and
+rule-evaluation layers.
+
+```mermaid
+flowchart TD
+    Client([HTTP Client])
+    API["FastAPI Route<br/>POST /flags/{id}/evaluate"]
+    Svc["EvaluationService.evaluate()"]
+
+    subgraph CacheLayer["Cache Layer (app/cache/cache.py)"]
+        CacheGet{"cache.get(key)<br/>key = flag_id + hash(context)"}
+        CacheSet["cache.set(key, result)<br/>TTL 300s"]
+    end
+
+    subgraph StorageLayer["Storage Layer (app/storage/storage.py)"]
+        Store{"storage.get(flag_id)<br/>asyncio.Lock guarded"}
+    end
+
+    Rules["Evaluate rules<br/>ALL must match<br/>(+ optional % rollout)"]
+    Result(["EvaluationResult<br/>flag_id, enabled, reason"])
+
+    Client -->|"user context"| API
+    API --> Svc
+    Svc --> CacheGet
+
+    CacheGet -->|"HIT"| Result
+    CacheGet -->|"MISS"| Store
+
+    Store -->|"not found"| NotFound["raise KeyError → 404"]
+    Store -->|"unavailable"| Fallback["default + reason:<br/>'storage unavailable, using default'"]
+    Store -->|"flag found"| Rules
+
+    Rules --> CacheSet
+    CacheSet --> Result
+
+    Fallback --> Result
+    Result -->|"200 OK"| Client
+
+    NotFound -->|"404"| Client
+```
+
+Cache writes are skipped on the fallback and not-found paths; the cache is also
+invalidated (`cache.invalidate(flag_id)`) whenever a flag is updated or deleted.
+
 ## Project layout
 
 ```
