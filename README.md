@@ -124,7 +124,7 @@ Configuration is read from environment variables or a local `.env` file
 | Method   | Path                        | Success | Notes                                   |
 | -------- | --------------------------- | ------- | --------------------------------------- |
 | `POST`   | `/flags`                    | `201`   | Create a flag. `409` on duplicate name. |
-| `GET`    | `/flags`                    | `200`   | List all flags.                         |
+| `GET`    | `/flags`                    | `200`   | List flags. Optional filters: `?name=` (case-insensitive partial match), `?default_state=true|false`. |
 | `GET`    | `/flags/{flag_id}`          | `200`   | `404` if not found.                     |
 | `PATCH`  | `/flags/{flag_id}`          | `200`   | Partial update. `404` if not found. `409` on name conflict. Invalidates cache immediately. |
 | `DELETE` | `/flags/{flag_id}`          | `204`   | Invalidates cache. `404` if not found.  |
@@ -161,6 +161,22 @@ curl -X POST http://localhost:8000/flags \
     "rules": [],
     "percentage": 25
   }'
+```
+
+### List flags with filters
+
+Filters are optional and combine with AND. `name` is a case-insensitive partial
+match; `default_state` is an exact match.
+
+```bash
+# Only flags whose default state is false
+curl 'http://localhost:8000/flags?default_state=false'
+
+# Only flags whose name contains "checkout" (case-insensitive)
+curl 'http://localhost:8000/flags?name=checkout'
+
+# Combine both: checkout flags that default to false
+curl 'http://localhost:8000/flags?name=checkout&default_state=false'
 ```
 
 ### Update a flag (partial)

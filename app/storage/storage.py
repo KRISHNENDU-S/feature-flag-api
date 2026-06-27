@@ -53,10 +53,28 @@ class FlagStorage:
             self._check_available()
             return self._flags.get(flag_id)
 
-    async def list(self) -> list[Flag]:
+    async def list(
+        self,
+        *,
+        name: str | None = None,
+        default_state: bool | None = None,
+    ) -> list[Flag]:
+        """Return all flags, optionally filtered.
+
+        ``name`` does a case-insensitive *substring* match; ``default_state``
+        is an exact match. Filters combine with AND.
+        """
+
         async with self._lock:
             self._check_available()
-            return list(self._flags.values())
+            flags = list(self._flags.values())
+
+        if name is not None:
+            needle = name.lower()
+            flags = [f for f in flags if needle in f.name.lower()]
+        if default_state is not None:
+            flags = [f for f in flags if f.default_state == default_state]
+        return flags
 
     async def update(self, flag_id: str, changes: dict[str, object]) -> Flag:
         """Apply a partial update to an existing flag and return it.

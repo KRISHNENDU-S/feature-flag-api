@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, HTTPException, Response, status
+from fastapi import Depends, FastAPI, HTTPException, Query, Response, status
 
 from app.cache.cache import TTLCache
 from app.config import settings
@@ -78,8 +78,16 @@ async def create_flag(
 
 
 @app.get("/flags", response_model=list[Flag])
-async def list_flags(store: FlagStorage = Depends(get_storage)) -> list[Flag]:
-    return await store.list()
+async def list_flags(
+    name: str | None = Query(
+        default=None, description="Case-insensitive partial name match."
+    ),
+    default_state: bool | None = Query(
+        default=None, description="Filter by default state (true/false)."
+    ),
+    store: FlagStorage = Depends(get_storage),
+) -> list[Flag]:
+    return await store.list(name=name, default_state=default_state)
 
 
 @app.get("/flags/{flag_id}", response_model=Flag)

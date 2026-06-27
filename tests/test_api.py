@@ -53,6 +53,47 @@ def test_get_missing_flag_returns_404(client):
     assert client.get("/flags/nope").status_code == 404
 
 
+def test_list_filter_by_default_state(client):
+    client.post("/flags", json=_flag_payload(name="on-flag", default_state=True))
+    client.post("/flags", json=_flag_payload(name="off-flag", default_state=False))
+
+    on = client.get("/flags", params={"default_state": "true"}).json()
+    assert [f["name"] for f in on] == ["on-flag"]
+
+    off = client.get("/flags", params={"default_state": "false"}).json()
+    assert [f["name"] for f in off] == ["off-flag"]
+
+
+def test_list_filter_by_partial_name_case_insensitive(client):
+    client.post("/flags", json=_flag_payload(name="checkout-v1"))
+    client.post("/flags", json=_flag_payload(name="checkout-v2"))
+    client.post("/flags", json=_flag_payload(name="search-banner"))
+
+    # Partial, case-insensitive substring match.
+    matches = client.get("/flags", params={"name": "CHECKOUT"}).json()
+    assert sorted(f["name"] for f in matches) == ["checkout-v1", "checkout-v2"]
+
+    none = client.get("/flags", params={"name": "missing"}).json()
+    assert none == []
+
+
+def test_list_filters_combine_with_and(client):
+    client.post("/flags", json=_flag_payload(name="checkout-on", default_state=True))
+    client.post("/flags", json=_flag_payload(name="checkout-off", default_state=False))
+    client.post("/flags", json=_flag_payload(name="search-on", default_state=True))
+
+    result = client.get(
+        "/flags", params={"name": "checkout", "default_state": "true"}
+    ).json()
+    assert [f["name"] for f in result] == ["checkout-on"]
+
+
+def test_list_without_filters_returns_all(client):
+    client.post("/flags", json=_flag_payload(name="a"))
+    client.post("/flags", json=_flag_payload(name="b"))
+    assert len(client.get("/flags").json()) == 2
+
+
 def test_delete_flag_returns_204_and_404_after(client):
     created = client.post("/flags", json=_flag_payload(name="del-me")).json()
     assert client.delete(f"/flags/{created['id']}").status_code == 204
